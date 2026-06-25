@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitrera-messaging-spec"
-version = "1.0.0"
+version = "1.0.1"
 description = "Universal ChatMessage & ToolCall schema for the Scitrera AI platform."
 readme = "README.md"
 requires-python = ">=3.11"

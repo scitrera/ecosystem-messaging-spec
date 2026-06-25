@@ -57,7 +57,7 @@ from .memorylayer import (
 )
 from .streaming import EventSink, MessageBuilder
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 def chat_message_json_schema() -> dict[str, Any]:
