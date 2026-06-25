@@ -6,4 +6,5 @@
 export * from './schema';
 export * from './tools';
 export * from './events';
+export * from './memorylayer';
 export {applyEvent, reduceEvents, type MessageState} from './applyEvent';
