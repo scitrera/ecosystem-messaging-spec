@@ -184,6 +184,36 @@ export interface FeedbackPart {
     [extra: string]: unknown;
 }
 
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+
+/** A single entry in a todo content part. */
+export interface TodoItem {
+    id?: string | null;
+    content: string;
+    status: TodoStatus;
+    /** Present-tense label shown while the item is in_progress
+     * (e.g. "Wiring sahara commit"); optional. */
+    active_form?: string | null;
+    [extra: string]: unknown;
+}
+
+/**
+ * A shared, mutable checklist surfaced in the conversation.
+ *
+ * The agent writes the full list on each update; live updates ride
+ * ``part_updated`` (patch ``{items}``). It persists via the MemoryLayer codec
+ * like any other part. ``id`` is stable so consumers can render the latest todo
+ * part as the live board across turns.
+ */
+export interface TodoPart {
+    type: 'todo';
+    id?: string | null;
+    title?: string | null;
+    items: TodoItem[];
+    meta?: Record<string, unknown> | null;
+    [extra: string]: unknown;
+}
+
 /**
  * Catch-all for content parts whose ``type`` this consumer doesn't recognize.
  *
@@ -206,7 +236,8 @@ export type KnownPartType =
     | 'reasoning'
     | 'subagent'
     | 'control'
-    | 'feedback';
+    | 'feedback'
+    | 'todo';
 
 const KNOWN_PART_TYPES: ReadonlySet<string> = new Set([
     'text',
@@ -220,6 +251,7 @@ const KNOWN_PART_TYPES: ReadonlySet<string> = new Set([
     'subagent',
     'control',
     'feedback',
+    'todo',
 ]);
 
 export function isKnownPartType(t: unknown): t is KnownPartType {
@@ -238,6 +270,7 @@ export type ContentPart =
     | SubagentPart
     | ControlPart
     | FeedbackPart
+    | TodoPart
     | UnknownPart;
 
 // ─── Envelope ────────────────────────────────────────────────────────

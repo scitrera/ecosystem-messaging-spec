@@ -42,6 +42,7 @@ _KNOWN_PART_TYPES = frozenset(
         "subagent",
         "control",
         "feedback",
+        "todo",
     }
 )
 
@@ -223,6 +224,38 @@ class UnknownPart(BaseModel):
     type: str
 
 
+TodoStatus = Literal["pending", "in_progress", "completed", "cancelled"]
+
+
+class TodoItem(BaseModel):
+    """A single entry in a todo content part."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = None
+    content: str = ""
+    status: TodoStatus = "pending"
+    # Present-tense label shown while the item is in_progress (e.g. "Wiring
+    # sahara commit"); optional.
+    active_form: str | None = None
+
+
+class TodoPart(_PartBase):
+    """A shared, mutable checklist surfaced in the conversation.
+
+    The agent writes the full list on each update; live updates ride
+    ``part_updated`` (patch ``{items}``). It persists via the MemoryLayer
+    codec like any other part. The ``id`` is stable so consumers can render
+    the latest todo part as the live board across turns.
+    """
+
+    type: Literal["todo"] = "todo"
+    id: str | None = None
+    title: str | None = None
+    items: list[TodoItem] = Field(default_factory=list)
+    meta: dict[str, Any] | None = None
+
+
 def _part_discriminator(value: Any) -> str:
     """Pydantic discriminator: dispatch known ``type`` values, else 'unknown'."""
     if isinstance(value, dict):
@@ -247,6 +280,7 @@ ContentPart = Annotated[
         Annotated[SubagentPart, Tag("subagent")],
         Annotated[ControlPart, Tag("control")],
         Annotated[FeedbackPart, Tag("feedback")],
+        Annotated[TodoPart, Tag("todo")],
         Annotated[UnknownPart, Tag("unknown")],
     ],
     Discriminator(_part_discriminator),
@@ -342,5 +376,8 @@ __all__ = [
     "SubagentPart",
     "ControlPart",
     "FeedbackPart",
+    "TodoStatus",
+    "TodoItem",
+    "TodoPart",
     "UnknownPart",
 ]

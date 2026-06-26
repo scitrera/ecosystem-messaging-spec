@@ -56,6 +56,7 @@ const (
 	PartSubagent   PartType = "subagent"
 	PartControl    PartType = "control"
 	PartFeedback   PartType = "feedback"
+	PartTodo       PartType = "todo"
 )
 
 // ToolCallStatus is the lifecycle status of a tool_call content part.
@@ -67,6 +68,16 @@ const (
 	ToolCallCompleted ToolCallStatus = "completed"
 	ToolCallFailed    ToolCallStatus = "failed"
 	ToolCallCancelled ToolCallStatus = "cancelled"
+)
+
+// TodoStatus is the lifecycle status of a single todo item.
+type TodoStatus string
+
+const (
+	TodoPending    TodoStatus = "pending"
+	TodoInProgress TodoStatus = "in_progress"
+	TodoCompleted  TodoStatus = "completed"
+	TodoCancelled  TodoStatus = "cancelled"
 )
 
 // MessageAddress carries routing identifiers. Unknown fields round-trip via
@@ -355,6 +366,27 @@ type FilePart struct {
 	Purpose   string `json:"purpose,omitempty"`
 }
 
+// TodoItem is a single entry in a todo content part.
+type TodoItem struct {
+	ID      string     `json:"id,omitempty"`
+	Content string     `json:"content"`
+	Status  TodoStatus `json:"status"`
+	// ActiveForm is the present-tense label shown while the item is in_progress
+	// (e.g. "Wiring sahara commit"); optional.
+	ActiveForm string `json:"active_form,omitempty"`
+}
+
+// TodoPart is a shared, mutable checklist surfaced in the conversation. The
+// agent writes the full list each update; live updates ride part_updated
+// (patch {items}). It persists via the MemoryLayer codec like any other part.
+type TodoPart struct {
+	Type  string         `json:"type"`
+	ID    string         `json:"id,omitempty"`
+	Title string         `json:"title,omitempty"`
+	Items []TodoItem     `json:"items"`
+	Meta  map[string]any `json:"meta,omitempty"`
+}
+
 // ─── typed constructors ──────────────────────────────────────────────────
 
 func partFrom(v any) (ContentPart, error) {
@@ -417,6 +449,16 @@ func NewFilePart(body FilePart) ContentPart {
 	return p
 }
 
+// NewTodoPart builds a todo content part.
+func NewTodoPart(body TodoPart) ContentPart {
+	body.Type = string(PartTodo)
+	if body.Items == nil {
+		body.Items = []TodoItem{}
+	}
+	p, _ := partFrom(body)
+	return p
+}
+
 // ─── typed accessors ─────────────────────────────────────────────────────
 
 // AsText returns the text of a text part.
@@ -463,6 +505,18 @@ func (p ContentPart) AsControl() (ControlPartBody, bool) {
 	var body ControlPartBody
 	if err := p.Decode(&body); err != nil {
 		return ControlPartBody{}, false
+	}
+	return body, true
+}
+
+// AsTodo decodes a todo content part.
+func (p ContentPart) AsTodo() (TodoPart, bool) {
+	if p.typ != PartTodo {
+		return TodoPart{}, false
+	}
+	var body TodoPart
+	if err := p.Decode(&body); err != nil {
+		return TodoPart{}, false
 	}
 	return body, true
 }

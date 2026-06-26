@@ -316,6 +316,41 @@ message:
 }
 ```
 
+### 3.13 `todo`
+```jsonc
+{
+  "type": "todo",
+  "id": "todo_main",               // stable id — consumers render the latest todo part by id
+  "title": "Release v1.1.0",       // optional
+  "items": [
+    {
+      "id": "t1",
+      "content": "Port the codec",                 // imperative description
+      "status": "pending" | "in_progress" | "completed" | "cancelled",
+      "active_form": "Porting the codec"?          // present-tense label for in_progress display
+    }
+  ],
+  "meta": { ... }
+}
+```
+
+A shared, mutable checklist surfaced in the conversation — the spec-native
+equivalent of an agent "TODO list" that the frontend and the agent both observe.
+The agent is authoritative: it writes the **full current list** on each update.
+The part `id` is stable so consumers render the most recent `todo` part as the
+live board across turns.
+
+Carrier role: `assistant` (the agent owns the list). Like `subagent`, a `todo`
+part persists as an ordinary content part (it survives the MemoryLayer codec via
+`data`), so reloaded history shows the last known board.
+
+Streaming for a `todo` part: the agent emits `part_appended` with the initial
+list, then `part_updated` with `{items: [...]}` on each change. The
+[`apply_event`](#streaming) reducer shallow-merges the patch, replacing the
+`items` array — so sending the whole list each time is the intended pattern (no
+per-item event granularity). `status` and `active_form` are an open set under
+§3.99 forward-compat; adding values does not bump `schema_version`.
+
 ### 3.99 Unknown / future part types
 
 Any `type` not listed above is **forward-compatible** — consumers MUST
