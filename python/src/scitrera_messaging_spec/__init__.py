@@ -38,6 +38,8 @@ from .schema import (
     Role,
     SubagentPart,
     SubagentStatus,
+    ApprovalRequestPart,
+    ApprovalStatus,
     TextPart,
     TodoItem,
     TodoPart,
@@ -60,7 +62,7 @@ from .memorylayer import (
 )
 from .streaming import EventSink, MessageBuilder
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 def chat_message_json_schema() -> dict[str, Any]:
@@ -100,6 +102,8 @@ __all__ = [
     "TodoStatus",
     "TodoItem",
     "TodoPart",
+    "ApprovalStatus",
+    "ApprovalRequestPart",
     "UnknownPart",
     # tools (spec 1.1)
     "TOOLS_SCHEMA_VERSION",

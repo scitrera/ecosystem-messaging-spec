@@ -45,18 +45,36 @@ const (
 type PartType string
 
 const (
-	PartText       PartType = "text"
-	PartImage      PartType = "image"
-	PartFile       PartType = "file"
-	PartToolCall   PartType = "tool_call"
-	PartToolResult PartType = "tool_result"
-	PartCitation   PartType = "citation"
-	PartDynamic    PartType = "dynamic"
-	PartReasoning  PartType = "reasoning"
-	PartSubagent   PartType = "subagent"
-	PartControl    PartType = "control"
-	PartFeedback   PartType = "feedback"
-	PartTodo       PartType = "todo"
+	PartText            PartType = "text"
+	PartImage           PartType = "image"
+	PartFile            PartType = "file"
+	PartToolCall        PartType = "tool_call"
+	PartToolResult      PartType = "tool_result"
+	PartCitation        PartType = "citation"
+	PartDynamic         PartType = "dynamic"
+	PartReasoning       PartType = "reasoning"
+	PartSubagent        PartType = "subagent"
+	PartControl         PartType = "control"
+	PartFeedback        PartType = "feedback"
+	PartTodo            PartType = "todo"
+	PartApprovalRequest PartType = "approval_request"
+)
+
+// Control kinds (open registry; new kinds do not bump the schema version).
+const (
+	ControlCancel  = "cancel"  // requires task_id
+	ControlApprove = "approve" // user grants an approval_request; requires request_id (+ optional scope)
+	ControlDeny    = "deny"    // user rejects an approval_request; requires request_id
+)
+
+// ApprovalStatus is the lifecycle of an approval_request content part.
+type ApprovalStatus string
+
+const (
+	ApprovalPending  ApprovalStatus = "pending"
+	ApprovalApproved ApprovalStatus = "approved"
+	ApprovalDenied   ApprovalStatus = "denied"
+	ApprovalExpired  ApprovalStatus = "expired"
 )
 
 // ToolCallStatus is the lifecycle status of a tool_call content part.
@@ -342,6 +360,11 @@ type ControlPartBody struct {
 	Type   string `json:"type"`
 	Kind   string `json:"kind"`
 	TaskID string `json:"task_id,omitempty"`
+	// RequestID + Scope are used by the approve/deny kinds to resolve a specific
+	// approval_request (RequestID = the approval_request's id; Scope is the grant
+	// breadth: once|session|always, ignored for deny).
+	RequestID string `json:"request_id,omitempty"`
+	Scope     string `json:"scope,omitempty"`
 }
 
 // ImagePart is an image content part. Prefer vfs_ref/uri; data_uri is an escape
@@ -385,6 +408,24 @@ type TodoPart struct {
 	Title string         `json:"title,omitempty"`
 	Items []TodoItem     `json:"items"`
 	Meta  map[string]any `json:"meta,omitempty"`
+}
+
+// ApprovalRequestPart is a human-in-the-loop permission prompt: the agent asks
+// the user to authorize a tool call that is not pre-authorized. The user answers
+// with a control part (kind approve/deny, request_id = this part's id). It is
+// mutated in place (part_updated) to flip status as it resolves, and persists
+// like any other part.
+type ApprovalRequestPart struct {
+	Type    string          `json:"type"`
+	ID      string          `json:"id"`
+	Tool    string          `json:"tool"`
+	Summary string          `json:"summary,omitempty"`
+	Args    json.RawMessage `json:"args,omitempty"`
+	// Options are the scopes the user may grant (subset of once|session|always).
+	Options []string       `json:"options,omitempty"`
+	Status  ApprovalStatus `json:"status"`
+	Reason  string         `json:"reason,omitempty"`
+	Meta    map[string]any `json:"meta,omitempty"`
 }
 
 // ─── typed constructors ──────────────────────────────────────────────────
@@ -459,6 +500,16 @@ func NewTodoPart(body TodoPart) ContentPart {
 	return p
 }
 
+// NewApprovalRequestPart builds an approval_request content part.
+func NewApprovalRequestPart(body ApprovalRequestPart) ContentPart {
+	body.Type = string(PartApprovalRequest)
+	if body.Status == "" {
+		body.Status = ApprovalPending
+	}
+	p, _ := partFrom(body)
+	return p
+}
+
 // ─── typed accessors ─────────────────────────────────────────────────────
 
 // AsText returns the text of a text part.
@@ -517,6 +568,18 @@ func (p ContentPart) AsTodo() (TodoPart, bool) {
 	var body TodoPart
 	if err := p.Decode(&body); err != nil {
 		return TodoPart{}, false
+	}
+	return body, true
+}
+
+// AsApprovalRequest decodes an approval_request content part.
+func (p ContentPart) AsApprovalRequest() (ApprovalRequestPart, bool) {
+	if p.typ != PartApprovalRequest {
+		return ApprovalRequestPart{}, false
+	}
+	var body ApprovalRequestPart
+	if err := p.Decode(&body); err != nil {
+		return ApprovalRequestPart{}, false
 	}
 	return body, true
 }

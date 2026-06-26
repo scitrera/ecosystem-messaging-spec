@@ -241,9 +241,11 @@ when the intent is a control signal.
 
 `kind` is an open registry. Required fields per known kind:
 
-| `kind`   | Required           | Notes                                                     |
-| -------- | ------------------ | --------------------------------------------------------- |
-| `cancel` | `task_id`          | Abort the named task. Targets the agent owning that task. |
+| `kind`    | Required      | Notes                                                                          |
+| --------- | ------------- | ------------------------------------------------------------------------------ |
+| `cancel`  | `task_id`     | Abort the named task. Targets the agent owning that task.                      |
+| `approve` | `request_id`  | Grant an `approval_request` (§3.14). Optional `scope`: once \| session \| always. |
+| `deny`    | `request_id`  | Reject an `approval_request` (§3.14). `scope` ignored.                          |
 
 Forward-compat: consumers MUST preserve unknown `kind` values on
 round-trip (per §3.10) and SHOULD ignore kinds they don't recognize
@@ -350,6 +352,46 @@ list, then `part_updated` with `{items: [...]}` on each change. The
 `items` array — so sending the whole list each time is the intended pattern (no
 per-item event granularity). `status` and `active_form` are an open set under
 §3.99 forward-compat; adding values does not bump `schema_version`.
+
+### 3.14 `approval_request`
+```jsonc
+{
+  "type": "approval_request",
+  "id": "appr_1",                  // correlation id; the response echoes it
+  "tool": "shell",                 // tool the agent wants to run
+  "summary": "Run: npm test",      // human-readable one-liner
+  "args": { "command": "npm test" }, // the raw tool args, for review
+  "options": ["once", "session", "always"], // scopes the user may grant
+  "status": "pending" | "approved" | "denied" | "expired",
+  "reason": "shell is not pre-authorized in this workspace"?,
+  "meta": { ... }
+}
+```
+
+A human-in-the-loop **permission prompt**: the agent asks the user to authorize a
+tool call that is not pre-authorized. Carrier role: `assistant`. The part is
+**mutated in place** — emitted via `part_appended` with `status: "pending"`, then
+a `part_updated` flips `status` to `approved` / `denied` / `expired` when it
+resolves. It persists like any other part (survives the MemoryLayer codec), so
+reloaded history shows the resolved prompt.
+
+The user answers with a **`control` part** (§3.11) whose `kind` is `approve` or
+`deny` and whose `request_id` equals this part's `id`:
+
+```json
+{ "type": "control", "kind": "approve", "request_id": "appr_1", "scope": "session" }
+```
+
+`scope` is the grant breadth — `once` (this call), `session` (remembered for the
+sandbox/session), or `always` (persisted per workspace) — and is ignored for
+`deny`. `options` advertises which scopes the producer will honor. `status`/
+`scope` values are an open set under §3.99 forward-compat; adding values does not
+bump `schema_version`.
+
+The streaming + resolution flow: agent emits `part_appended` (pending) → the chat
+task stays `RUNNING` while awaiting → user sends an `approve`/`deny` control →
+agent emits `part_updated` (`{status}`) and proceeds (or skips) the tool. A
+server-side timeout resolves an unanswered prompt to `expired`.
 
 ### 3.99 Unknown / future part types
 

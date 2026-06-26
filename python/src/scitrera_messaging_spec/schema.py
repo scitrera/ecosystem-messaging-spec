@@ -43,6 +43,7 @@ _KNOWN_PART_TYPES = frozenset(
         "control",
         "feedback",
         "todo",
+        "approval_request",
     }
 )
 
@@ -180,6 +181,11 @@ class ControlPart(_PartBase):
     type: Literal["control"] = "control"
     kind: str
     task_id: str | None = None
+    # Used by the approve/deny kinds to resolve a specific approval_request
+    # (request_id = the approval_request's id; scope = once|session|always,
+    # ignored for deny).
+    request_id: str | None = None
+    scope: str | None = None
 
 
 class FeedbackPart(_PartBase):
@@ -256,6 +262,31 @@ class TodoPart(_PartBase):
     meta: dict[str, Any] | None = None
 
 
+ApprovalStatus = Literal["pending", "approved", "denied", "expired"]
+
+
+class ApprovalRequestPart(_PartBase):
+    """A human-in-the-loop permission prompt.
+
+    The agent asks the user to authorize a tool call that is not
+    pre-authorized. The user answers with a ``ControlPart`` (kind
+    ``approve``/``deny``, ``request_id`` == this part's ``id``). The part is
+    mutated in place (``part_updated``) to flip ``status`` as it resolves, and
+    persists like any other part.
+    """
+
+    type: Literal["approval_request"] = "approval_request"
+    id: str
+    tool: str
+    summary: str | None = None
+    args: Any = None
+    # Scopes the user may grant (subset of once|session|always).
+    options: list[str] = Field(default_factory=list)
+    status: ApprovalStatus = "pending"
+    reason: str | None = None
+    meta: dict[str, Any] | None = None
+
+
 def _part_discriminator(value: Any) -> str:
     """Pydantic discriminator: dispatch known ``type`` values, else 'unknown'."""
     if isinstance(value, dict):
@@ -281,6 +312,7 @@ ContentPart = Annotated[
         Annotated[ControlPart, Tag("control")],
         Annotated[FeedbackPart, Tag("feedback")],
         Annotated[TodoPart, Tag("todo")],
+        Annotated[ApprovalRequestPart, Tag("approval_request")],
         Annotated[UnknownPart, Tag("unknown")],
     ],
     Discriminator(_part_discriminator),
@@ -379,5 +411,7 @@ __all__ = [
     "TodoStatus",
     "TodoItem",
     "TodoPart",
+    "ApprovalStatus",
+    "ApprovalRequestPart",
     "UnknownPart",
 ]

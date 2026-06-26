@@ -132,6 +132,11 @@ export interface ControlPart {
     type: 'control';
     kind: string;
     task_id?: string | null;
+    /** Used by the approve/deny kinds to resolve a specific approval_request
+     * (request_id = the approval_request's id; scope = once|session|always,
+     * ignored for deny). */
+    request_id?: string | null;
+    scope?: string | null;
     [extra: string]: unknown;
 }
 
@@ -214,6 +219,30 @@ export interface TodoPart {
     [extra: string]: unknown;
 }
 
+export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired';
+
+/**
+ * A human-in-the-loop permission prompt.
+ *
+ * The agent asks the user to authorize a tool call that is not pre-authorized.
+ * The user answers with a `ControlPart` (kind `approve`/`deny`, `request_id`
+ * equal to this part's `id`). The part is mutated in place (`part_updated`) to
+ * flip `status` as it resolves, and persists like any other part.
+ */
+export interface ApprovalRequestPart {
+    type: 'approval_request';
+    id: string;
+    tool: string;
+    summary?: string | null;
+    args?: unknown;
+    /** Scopes the user may grant (subset of once|session|always). */
+    options?: string[] | null;
+    status: ApprovalStatus;
+    reason?: string | null;
+    meta?: Record<string, unknown> | null;
+    [extra: string]: unknown;
+}
+
 /**
  * Catch-all for content parts whose ``type`` this consumer doesn't recognize.
  *
@@ -237,7 +266,8 @@ export type KnownPartType =
     | 'subagent'
     | 'control'
     | 'feedback'
-    | 'todo';
+    | 'todo'
+    | 'approval_request';
 
 const KNOWN_PART_TYPES: ReadonlySet<string> = new Set([
     'text',
@@ -252,6 +282,7 @@ const KNOWN_PART_TYPES: ReadonlySet<string> = new Set([
     'control',
     'feedback',
     'todo',
+    'approval_request',
 ]);
 
 export function isKnownPartType(t: unknown): t is KnownPartType {
@@ -271,6 +302,7 @@ export type ContentPart =
     | ControlPart
     | FeedbackPart
     | TodoPart
+    | ApprovalRequestPart
     | UnknownPart;
 
 // ─── Envelope ────────────────────────────────────────────────────────
