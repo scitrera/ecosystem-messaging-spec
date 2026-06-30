@@ -65,6 +65,7 @@ const (
 	ControlCancel  = "cancel"  // requires task_id
 	ControlApprove = "approve" // user grants an approval_request; requires request_id (+ optional scope)
 	ControlDeny    = "deny"    // user rejects an approval_request; requires request_id
+	ControlClear   = "clear"   // clear a thread's history; targets the agent owning the thread (addr.thread_id)
 )
 
 // ApprovalStatus is the lifecycle of an approval_request content part.

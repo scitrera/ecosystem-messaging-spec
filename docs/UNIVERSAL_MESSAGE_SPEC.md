@@ -246,6 +246,7 @@ when the intent is a control signal.
 | `cancel`  | `task_id`     | Abort the named task. Targets the agent owning that task.                      |
 | `approve` | `request_id`  | Grant an `approval_request` (§3.14). Optional `scope`: once \| session \| always. |
 | `deny`    | `request_id`  | Reject an `approval_request` (§3.14). `scope` ignored.                          |
+| `clear`   | `addr.thread_id` | Clear the addressed thread's history. Targets the agent owning the thread; the agent drops its own cached/internal copy so durable deletes don't resurrect. |
 
 Forward-compat: consumers MUST preserve unknown `kind` values on
 round-trip (per §3.10) and SHOULD ignore kinds they don't recognize
