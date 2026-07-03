@@ -99,6 +99,17 @@ const (
 	TodoCancelled  TodoStatus = "cancelled"
 )
 
+// SubagentStatus is the lifecycle status of a subagent reference part.
+type SubagentStatus string
+
+const (
+	SubagentPending   SubagentStatus = "pending"
+	SubagentRunning   SubagentStatus = "running"
+	SubagentCompleted SubagentStatus = "completed"
+	SubagentFailed    SubagentStatus = "failed"
+	SubagentCancelled SubagentStatus = "cancelled"
+)
+
 // MessageAddress carries routing identifiers. Unknown fields round-trip via
 // Extra.
 type MessageAddress struct {
@@ -429,6 +440,24 @@ type ApprovalRequestPart struct {
 	Meta    map[string]any `json:"meta,omitempty"`
 }
 
+// SubagentPart is a reference to a subagent's conversation. The subagent has its
+// own thread (ThreadID) whose messages are persisted independently and
+// back-reference the spawning message via MessageRef.ParentThreadID /
+// ParentMessageID. The parent message carries only the reference + a short
+// summary; the full subagent transcript lives on its own thread.
+type SubagentPart struct {
+	Type       string          `json:"type"`
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	ThreadID   string          `json:"thread_id"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Status     SubagentStatus  `json:"status"`
+	Summary    string          `json:"summary,omitempty"`
+	StartedAt  string          `json:"started_at,omitempty"`
+	FinishedAt string          `json:"finished_at,omitempty"`
+	Meta       map[string]any  `json:"meta,omitempty"`
+}
+
 // ─── typed constructors ──────────────────────────────────────────────────
 
 func partFrom(v any) (ContentPart, error) {
@@ -506,6 +535,16 @@ func NewApprovalRequestPart(body ApprovalRequestPart) ContentPart {
 	body.Type = string(PartApprovalRequest)
 	if body.Status == "" {
 		body.Status = ApprovalPending
+	}
+	p, _ := partFrom(body)
+	return p
+}
+
+// NewSubagentPart builds a subagent reference part.
+func NewSubagentPart(body SubagentPart) ContentPart {
+	body.Type = string(PartSubagent)
+	if body.Status == "" {
+		body.Status = SubagentPending
 	}
 	p, _ := partFrom(body)
 	return p
@@ -605,6 +644,18 @@ func (p ContentPart) AsFile() (FilePart, bool) {
 	var body FilePart
 	if err := p.Decode(&body); err != nil {
 		return FilePart{}, false
+	}
+	return body, true
+}
+
+// AsSubagent decodes a subagent reference part.
+func (p ContentPart) AsSubagent() (SubagentPart, bool) {
+	if p.typ != PartSubagent {
+		return SubagentPart{}, false
+	}
+	var body SubagentPart
+	if err := p.Decode(&body); err != nil {
+		return SubagentPart{}, false
 	}
 	return body, true
 }
