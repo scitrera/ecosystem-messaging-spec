@@ -183,6 +183,46 @@ func Test_RoundTrip_preserves_content_types_meta_addr_ref(t *testing.T) {
 	if err := json.Unmarshal(back.Meta["x-cowork"], &xc); err != nil || xc["trace"] != "abc" {
 		t.Fatalf("x-cowork meta = %s (err %v)", back.Meta["x-cowork"], err)
 	}
+	// Non-reserved scitrera.* meta survives (regression: the read codec used to
+	// delete the entire scitrera namespace, dropping producer keys like the
+	// per-message agent display name). Reserved spec-owned keys must NOT leak back.
+	var sc map[string]any
+	if err := json.Unmarshal(back.Meta["scitrera"], &sc); err != nil || sc["feedback"] != "thumbs_up" {
+		t.Fatalf("scitrera meta = %s (err %v)", back.Meta["scitrera"], err)
+	}
+	if _, leaked := sc["message_id"]; leaked {
+		t.Fatalf("reserved spec key leaked back into meta.scitrera: %#v", sc)
+	}
+	if _, leaked := sc["addr"]; leaked {
+		t.Fatalf("reserved spec key leaked back into meta.scitrera: %#v", sc)
+	}
+}
+
+func Test_RoundTrip_preserves_scitrera_agent_name(t *testing.T) {
+	// The per-message agent display name (meta.scitrera.agent_name) must survive the
+	// MemoryLayer round trip, or a renamed agent reverts to the default on reload.
+	msg := ChatMessage{
+		ID:      "m-name",
+		Role:    RoleAssistant,
+		Content: []ContentPart{rawPart(t, `{"type":"text","text":"I'm now Winick"}`)},
+		Addr:    MessageAddress{ThreadID: "t1"},
+		Meta:    map[string]json.RawMessage{"scitrera": json.RawMessage(`{"agent_name":"Winick"}`)},
+	}
+	payload, err := ToMemoryLayerPayload(msg)
+	if err != nil {
+		t.Fatalf("ToMemoryLayerPayload: %v", err)
+	}
+	back, err := FromMemoryLayerMessage(map[string]any{
+		"id": "ml1", "thread_id": "t1", "role": "assistant",
+		"content": payload["content"], "metadata": payload["metadata"],
+	})
+	if err != nil {
+		t.Fatalf("FromMemoryLayerMessage: %v", err)
+	}
+	var sc map[string]any
+	if err := json.Unmarshal(back.Meta["scitrera"], &sc); err != nil || sc["agent_name"] != "Winick" {
+		t.Fatalf("agent_name not preserved: meta.scitrera = %s (err %v)", back.Meta["scitrera"], err)
+	}
 }
 
 func Test_RoundTrip_tool_call_args_and_result_output_preserved(t *testing.T) {

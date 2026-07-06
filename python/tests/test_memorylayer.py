@@ -148,6 +148,32 @@ def test_round_trip_preserves_all_content_and_meta() -> None:
     assert back.ref.parent_thread_id == "thr_main"
     # Non-scitrera meta survives.
     assert back.meta["x-cowork"] == {"trace": "abc"}
+    # Non-reserved scitrera.* meta survives (regression: the read codec used to pop
+    # the entire scitrera namespace, silently dropping producer keys like the
+    # per-message agent display name — reverting a renamed agent to the default on
+    # history reload). Reserved spec-owned keys must NOT leak back into meta.scitrera.
+    assert back.meta["scitrera"]["feedback"] == "thumbs_up"
+    assert "message_id" not in back.meta["scitrera"]
+    assert "addr" not in back.meta["scitrera"]
+
+
+def test_round_trip_preserves_scitrera_agent_name() -> None:
+    """The per-message agent display name (meta.scitrera.agent_name) must survive the
+    MemoryLayer round-trip, or a renamed agent reverts to the workspace default on
+    history reload."""
+    msg = ChatMessage(
+        id="m-name",
+        role="assistant",
+        content=[TextPart(text="I'm now Winick")],
+        addr=MessageAddress(thread_id="t1"),
+        meta={"scitrera": {"agent_name": "Winick"}},
+    )
+    payload = to_memorylayer_payload(msg)
+    back = from_memorylayer_message(
+        {"id": "ml1", "thread_id": "t1", "role": "assistant",
+         "content": payload["content"], "metadata": payload["metadata"]}
+    )
+    assert back.meta["scitrera"]["agent_name"] == "Winick"
 
 
 def test_round_trip_tool_call_args_preserved() -> None:

@@ -34,6 +34,20 @@ const memorylayerNS = "scitrera"
 // spec deliberately avoids a runtime dep on the MemoryLayer SDK).
 const memorylayerAppWorkspaceKey = "app_workspace"
 
+// reservedScitreraKeys are the spec-OWNED keys stored under the reserved
+// "scitrera" namespace by buildMLMetadata. On read they are harvested into
+// dedicated ChatMessage fields; every OTHER scitrera.* key is producer/consumer
+// data (e.g. the per-message agent display name "agent_name", "feedback",
+// "telemetry", "authority_grant_id") and MUST survive on meta["scitrera"] or it
+// is silently lost on history reload. Keep in sync with buildMLMetadata.
+var reservedScitreraKeys = map[string]bool{
+	"schema_version": true,
+	"message_id":     true,
+	"created_at":     true,
+	"addr":           true,
+	"ref":            true,
+}
+
 // ToMemoryLayerPayload converts a spec ChatMessage to a MemoryLayer
 // append_messages entry. The returned map matches MemoryLayer's payload shape
 // and is safe to pass into client.AppendMessages(threadID, []map[string]any{...}).
@@ -127,7 +141,21 @@ func FromMemoryLayerMessage(mlMessage map[string]any) (ChatMessage, error) {
 		return ChatMessage{}, fmt.Errorf("spec: memorylayer: content: %w", err)
 	}
 
-	// Remaining metadata (scitrera namespace already removed) becomes meta.
+	// Re-attach non-reserved scitrera.* metadata (agent_name, feedback, telemetry, …)
+	// so the round-trip is lossless: only the spec-owned keys were harvested into
+	// dedicated fields above; every other scitrera key is producer/consumer data (e.g.
+	// the per-message agent display name) and is otherwise dropped on reload.
+	residualScitrera := map[string]any{}
+	for k, v := range specExtras {
+		if !reservedScitreraKeys[k] {
+			residualScitrera[k] = v
+		}
+	}
+	if len(residualScitrera) > 0 {
+		mlMeta[memorylayerNS] = residualScitrera
+	}
+
+	// Remaining metadata (spec-owned scitrera keys removed) becomes meta.
 	meta := map[string]json.RawMessage{}
 	for k, v := range mlMeta {
 		raw, err := json.Marshal(v)

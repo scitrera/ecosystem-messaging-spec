@@ -29,6 +29,14 @@ _part_adapter: TypeAdapter[ContentPart] = TypeAdapter(ContentPart)
 # MemoryLayer round-trips these keys verbatim.
 _NS = "scitrera"
 
+# Spec-OWNED keys stored under the reserved ``scitrera`` namespace by
+# ``_build_ml_metadata``. On read they are harvested into dedicated ChatMessage
+# fields; every OTHER ``scitrera.*`` key is producer/consumer data (e.g. the
+# per-message agent display name ``agent_name``, ``feedback``, ``telemetry``,
+# ``authority_grant_id``) and MUST survive on ``meta.scitrera`` or it is silently
+# lost on history reload. Keep in sync with the keys written in ``_build_ml_metadata``.
+_RESERVED_SCITRERA_KEYS = frozenset({"schema_version", "message_id", "created_at", "addr", "ref"})
+
 # Top-level MemoryLayer message-metadata key carrying the originating app
 # workspace at write time. Mirrors ``memorylayer.MESSAGE_META_APP_WORKSPACE_KEY``
 # (SDK) and ``memorylayer_server.models.chat.MESSAGE_META_APP_WORKSPACE_KEY``
@@ -83,6 +91,14 @@ def from_memorylayer_message(ml_message: dict[str, Any]) -> ChatMessage:
     ref = MessageRef.model_validate(ref_dump) if ref_dump else None
 
     content = _ml_content_to_parts(ml_message.get("content"))
+
+    # Re-attach non-reserved scitrera.* metadata (agent_name, feedback, telemetry, …)
+    # so the round-trip is lossless. ``spec_extras`` was popped off ``ml_meta`` above and
+    # only the spec-owned keys are harvested into dedicated fields; without this, every
+    # other scitrera key — e.g. the per-message agent display name — is dropped on reload.
+    residual_scitrera = {k: v for k, v in spec_extras.items() if k not in _RESERVED_SCITRERA_KEYS}
+    if residual_scitrera:
+        ml_meta[_NS] = residual_scitrera
 
     raw: dict[str, Any] = {
         "schema_version": spec_extras.get("schema_version", "1.0"),
