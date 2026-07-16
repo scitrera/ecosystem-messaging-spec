@@ -176,6 +176,34 @@ Replacement for the frontend's `DYNAMIC_JSX` content and
 `chat/progress_notify` blocks. `kind` is an open registry — each
 consumer ships its own renderer for the kinds it supports.
 
+**Known kind `tool_call_progress`** — a live tqdm-style progress bar
+streamed from long-running tool or in-sandbox code execution:
+```jsonc
+{
+  "type": "dynamic",
+  "kind": "tool_call_progress",
+  "interactive": false,
+  "payload": {
+    "bar_id": "stqdm_0",      // STABLE id → consumers key the bar on it
+    "desc": "Scoring bids",
+    "n": 42, "total": 100,     // total 0/omitted = unknown length
+    "elapsed_s": 12.4,
+    "rate": 3.4,               // iterations / second
+    "eta_s": 17.1,             // best-effort seconds remaining
+    "unit": "it",
+    "status": "running",       // running | done | error
+    "nest": 0                  // depth for nested / concurrent bars
+  }
+}
+```
+`bar_id` maps to the streamed part id: the producer emits `part_appended`
+on first sighting of a bar, then `part_updated` for each subsequent frame
+(throttled at the source, ~5–10/s), and a terminal frame with
+`status: "done"` (or `"error"`). The final frame persists as an ordinary
+content part via the MemoryLayer codec, so a reloaded thread shows the
+completed bar. Typed helpers: `NewToolCallProgressPart` (go),
+`makeToolCallProgressPart` (ts), `make_tool_call_progress_part` (python).
+
 ### 3.8 `reasoning` *(opt-in)*
 ```jsonc
 { "type": "reasoning", "text": "...", "redacted": false }
@@ -223,8 +251,11 @@ when the subagent reports completion.
 ```jsonc
 {
   "type": "control",
-  "kind": "cancel" | "<future>",
-  "task_id": "task_..."?
+  "kind": "cancel" | "rename" | "<future>",
+  "task_id": "task_..."?,
+  "request_id": "appr_..."?,   // approve/deny
+  "scope": "session"?,          // approve
+  "payload": { ... }?           // optional per-kind data object (see below)
 }
 ```
 
@@ -232,6 +263,17 @@ An in-band control signal carried on a chat message. Used for control
 flow that must travel on the same wire as the conversation rather than
 over a separate side channel — typically cancel, but reserved for
 future pause/resume/configure/etc.
+
+**Correlation ids vs. `payload`.** The top-level `task_id` / `request_id` /
+`scope` are cross-cutting **correlation ids** that generic handlers and the
+transport route on. `payload` is an **optional per-kind data object** (mirrors
+`dynamic.payload`, §3.7): its shape is defined by convention per `kind` in the
+table below and validated by that kind's handler, not by the envelope. Keeping
+kind-specific data in `payload` means new kinds — or new fields on an existing
+kind — need no change to the `ControlPart` struct in the go/python/typescript
+impls. `payload` is a **nested JSON object, not a JSON string** (same rule as
+`tool_call.args`, §3.4). Consumers preserve unknown `payload` fields on
+round-trip (§8); adding a kind or a payload field does not bump `schema_version`.
 
 Carrier role: `system`. A message that carries only `control` parts
 SHOULD use `role: "system"`. Mixing `control` with `text` is permitted
@@ -247,11 +289,26 @@ when the intent is a control signal.
 | `approve` | `request_id`  | Grant an `approval_request` (§3.14). Optional `scope`: once \| session \| always. |
 | `deny`    | `request_id`  | Reject an `approval_request` (§3.14). `scope` ignored.                          |
 | `clear`   | `addr.thread_id` | Clear the addressed thread's history. Targets the agent owning the thread; the agent drops its own cached/internal copy so durable deletes don't resurrect. |
+| `rename`  | `addr.thread_id` + `payload.title` | Set the addressed thread's display title. Targets the agent/consumer owning the thread, which persists it to thread metadata. Bidirectional: a client sends it to rename; an agent sends it to auto-title or to propagate a rename to other connected clients. `payload.title` MUST be a non-empty string. Thread-scoped (no `task_id`); idempotent, last-writer-wins. |
 
 Forward-compat: consumers MUST preserve unknown `kind` values on
 round-trip (per §3.10) and SHOULD ignore kinds they don't recognize
 rather than erroring. Adding a new control `kind` does not bump
 `schema_version`.
+
+Example — rename signal (a user renames thread `th1`; an agent auto-title is
+byte-identical except `addr.agent_id` identifies the sender):
+
+```json
+{
+  "schema_version": "1.0",
+  "id": "msg_rename_1",
+  "role": "system",
+  "addr": {"workspace_id": "w1", "thread_id": "th1", "user_id": "u1"},
+  "content": [{"type": "control", "kind": "rename", "payload": {"title": "Q3 revenue analysis"}}],
+  "meta": {}
+}
+```
 
 Example — cancel signal:
 

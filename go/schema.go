@@ -66,6 +66,14 @@ const (
 	ControlApprove = "approve" // user grants an approval_request; requires request_id (+ optional scope)
 	ControlDeny    = "deny"    // user rejects an approval_request; requires request_id
 	ControlClear   = "clear"   // clear a thread's history; targets the agent owning the thread (addr.thread_id)
+	ControlRename  = "rename"  // set the addressed thread's title; targets the thread owner (addr.thread_id) + payload.title (non-empty)
+)
+
+// Dynamic-part kinds (open registry; §3.7). Each consumer ships its own renderer
+// for the kinds it supports; unknown kinds round-trip verbatim.
+const (
+	DynamicJSX              = "jsx"                // frontend-rendered JSX payload
+	DynamicToolCallProgress = "tool_call_progress" // a live tqdm-style progress bar
 )
 
 // ApprovalStatus is the lifecycle of an approval_request content part.
@@ -367,7 +375,7 @@ type ToolResultPartBody struct {
 }
 
 // ControlPartBody is an in-band control signal (kind is an open registry; the
-// known kind "cancel" requires task_id).
+// known kind "cancel" requires task_id, "rename" requires payload.title).
 type ControlPartBody struct {
 	Type   string `json:"type"`
 	Kind   string `json:"kind"`
@@ -377,6 +385,13 @@ type ControlPartBody struct {
 	// breadth: once|session|always, ignored for deny).
 	RequestID string `json:"request_id,omitempty"`
 	Scope     string `json:"scope,omitempty"`
+	// Payload is optional per-kind data (mirrors a dynamic part's payload, spec
+	// §3.7): its shape is defined by convention per kind — e.g. the "rename" kind
+	// carries {"title": "..."}. Top-level fields above are cross-cutting correlation
+	// ids that generic handlers/transports route on; kind-specific data goes here so
+	// new kinds (or new per-kind fields) need no struct change. Preserved verbatim on
+	// round-trip.
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // ImagePart is an image content part. Prefer vfs_ref/uri; data_uri is an escape
@@ -458,6 +473,44 @@ type SubagentPart struct {
 	Meta       map[string]any  `json:"meta,omitempty"`
 }
 
+// ProgressStatus is the lifecycle of a tool_call_progress bar.
+type ProgressStatus string
+
+const (
+	ProgressRunning ProgressStatus = "running"
+	ProgressDone    ProgressStatus = "done"
+	ProgressError   ProgressStatus = "error"
+)
+
+// DynamicPart is a consumer-rendered content part (spec §3.7). Kind is an open
+// registry; Payload's shape is defined by convention per kind and preserved
+// verbatim on round-trip. Interactive flags a payload the user can act on.
+type DynamicPart struct {
+	Type        string          `json:"type"`
+	Kind        string          `json:"kind"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	Interactive bool            `json:"interactive,omitempty"`
+}
+
+// ToolCallProgressPayload is the standardized payload for a dynamic part of kind
+// "tool_call_progress": a live tqdm-style progress bar streamed from long-running
+// tool / in-sandbox code execution. BarID is the STABLE identity — consumers key
+// the rendered bar on it, and it maps to the streamed part id (part_appended on
+// first sighting, part_updated after). Timing fields are best-effort snapshots.
+type ToolCallProgressPayload struct {
+	BarID    string         `json:"bar_id"`
+	Desc     string         `json:"desc,omitempty"`
+	N        float64        `json:"n"`
+	Total    float64        `json:"total,omitempty"` // 0 / omitted = unknown length
+	ElapsedS float64        `json:"elapsed_s,omitempty"`
+	Rate     float64        `json:"rate,omitempty"`  // iterations per second
+	EtaS     float64        `json:"eta_s,omitempty"` // best-effort seconds remaining
+	Unit     string         `json:"unit,omitempty"`  // default "it"
+	Status   ProgressStatus `json:"status,omitempty"`
+	Nest     int            `json:"nest,omitempty"` // nesting depth for concurrent/nested bars
+	Meta     map[string]any `json:"meta,omitempty"`
+}
+
 // ─── typed constructors ──────────────────────────────────────────────────
 
 func partFrom(v any) (ContentPart, error) {
@@ -506,6 +559,30 @@ func NewControlPart(kind, taskID string) ContentPart {
 	return p
 }
 
+// NewControlPartWithPayload builds a control part carrying optional per-kind data
+// (marshaled to JSON as payload). Use it for kinds whose signal includes data
+// beyond the correlation ids (task_id/request_id/scope) — e.g. "rename". A nil
+// payload behaves like NewControlPart with no ids.
+func NewControlPartWithPayload(kind string, payload any) (ContentPart, error) {
+	body := ControlPartBody{Type: string(PartControl), Kind: kind}
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return ContentPart{}, fmt.Errorf("spec: marshal control payload: %w", err)
+		}
+		body.Payload = raw
+	}
+	return partFrom(body)
+}
+
+// NewRenameControlPart builds a "rename" control part that sets the addressed
+// thread's title (the carrier message's addr.thread_id is the target). title must
+// be non-empty per the spec.
+func NewRenameControlPart(title string) ContentPart {
+	p, _ := NewControlPartWithPayload(ControlRename, map[string]string{"title": title})
+	return p
+}
+
 // NewImagePart builds an image content part.
 func NewImagePart(body ImagePart) ContentPart {
 	body.Type = string(PartImage)
@@ -548,6 +625,34 @@ func NewSubagentPart(body SubagentPart) ContentPart {
 	}
 	p, _ := partFrom(body)
 	return p
+}
+
+// NewDynamicPart builds a dynamic content part carrying an optional per-kind
+// payload (marshaled to JSON). A nil payload yields a dynamic part with just the
+// kind.
+func NewDynamicPart(kind string, payload any, interactive bool) (ContentPart, error) {
+	body := DynamicPart{Type: string(PartDynamic), Kind: kind, Interactive: interactive}
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return ContentPart{}, fmt.Errorf("spec: marshal dynamic payload: %w", err)
+		}
+		body.Payload = raw
+	}
+	return partFrom(body)
+}
+
+// NewToolCallProgressPart builds a dynamic tool_call_progress part (a live
+// progress bar). Status defaults to running and unit to "it".
+func NewToolCallProgressPart(pl ToolCallProgressPayload) ContentPart {
+	if pl.Status == "" {
+		pl.Status = ProgressRunning
+	}
+	if pl.Unit == "" {
+		pl.Unit = "it"
+	}
+	part, _ := NewDynamicPart(DynamicToolCallProgress, pl, false)
+	return part
 }
 
 // ─── typed accessors ─────────────────────────────────────────────────────
@@ -610,6 +715,32 @@ func (p ContentPart) AsTodo() (TodoPart, bool) {
 		return TodoPart{}, false
 	}
 	return body, true
+}
+
+// AsDynamic decodes a dynamic content part.
+func (p ContentPart) AsDynamic() (DynamicPart, bool) {
+	if p.typ != PartDynamic {
+		return DynamicPart{}, false
+	}
+	var body DynamicPart
+	if err := p.Decode(&body); err != nil {
+		return DynamicPart{}, false
+	}
+	return body, true
+}
+
+// AsToolCallProgress decodes the payload of a dynamic tool_call_progress part.
+// It returns false for a dynamic part of any other kind.
+func (p ContentPart) AsToolCallProgress() (ToolCallProgressPayload, bool) {
+	d, ok := p.AsDynamic()
+	if !ok || d.Kind != DynamicToolCallProgress || len(d.Payload) == 0 {
+		return ToolCallProgressPayload{}, false
+	}
+	var pl ToolCallProgressPayload
+	if err := json.Unmarshal(d.Payload, &pl); err != nil {
+		return ToolCallProgressPayload{}, false
+	}
+	return pl, true
 }
 
 // AsApprovalRequest decodes an approval_request content part.

@@ -98,6 +98,39 @@ export interface DynamicPart {
     [extra: string]: unknown;
 }
 
+/** Dynamic-part kinds (open registry; §3.7). Each consumer ships its own renderer. */
+export const DYNAMIC_JSX = 'jsx';
+export const DYNAMIC_TOOL_CALL_PROGRESS = 'tool_call_progress';
+
+export type ProgressStatus = 'running' | 'done' | 'error';
+
+/**
+ * Standardized payload for a dynamic part of kind ``tool_call_progress``: a live
+ * tqdm-style progress bar streamed from long-running tool / in-sandbox code
+ * execution. ``bar_id`` is the STABLE identity — consumers key the rendered bar
+ * on it, and it maps to the streamed part id (``part_appended`` on first
+ * sighting, ``part_updated`` after). Timing fields are best-effort snapshots.
+ */
+export interface ToolCallProgressPayload {
+    bar_id: string;
+    desc?: string;
+    n: number;
+    /** 0 / omitted = unknown length. */
+    total?: number;
+    elapsed_s?: number;
+    /** iterations per second. */
+    rate?: number;
+    /** best-effort seconds remaining. */
+    eta_s?: number;
+    /** default "it". */
+    unit?: string;
+    status?: ProgressStatus;
+    /** nesting depth for concurrent / nested bars. */
+    nest?: number;
+    meta?: Record<string, unknown>;
+    [extra: string]: unknown;
+}
+
 export interface ReasoningPart {
     type: 'reasoning';
     text: string;
@@ -127,6 +160,8 @@ export type SubagentStatus =
  *
  * Required fields per kind:
  *   - ``kind === "cancel"`` requires ``task_id``.
+ *   - ``kind === "rename"`` requires ``payload.title`` (non-empty); targets
+ *     ``addr.thread_id``.
  */
 export interface ControlPart {
     type: 'control';
@@ -137,6 +172,12 @@ export interface ControlPart {
      * ignored for deny). */
     request_id?: string | null;
     scope?: string | null;
+    /** Optional per-kind data (mirrors ``DynamicPart.payload``, spec §3.7). Its
+     * shape is defined by convention per ``kind`` — e.g. the ``rename`` kind
+     * carries ``{title: string}``. The top-level fields above are cross-cutting
+     * correlation ids that generic handlers route on; kind-specific data lives
+     * here so new kinds (or new per-kind fields) need no interface change. */
+    payload?: unknown;
     [extra: string]: unknown;
 }
 
@@ -342,6 +383,17 @@ export interface ChatMessage {
     meta: Record<string, unknown>;
     ref?: MessageRef | null;
     [extra: string]: unknown;
+}
+
+/** Build a dynamic ``tool_call_progress`` part (a live progress bar). Fills the
+ * status/unit defaults so callers pass only the live counters. */
+export function makeToolCallProgressPart(payload: ToolCallProgressPayload): DynamicPart {
+    return {
+        type: 'dynamic',
+        kind: DYNAMIC_TOOL_CALL_PROGRESS,
+        interactive: false,
+        payload: {status: 'running', unit: 'it', ...payload},
+    };
 }
 
 /** Builder helper — fills in spec defaults so callers only pass what they care about. */

@@ -127,6 +127,49 @@ class DynamicPart(_PartBase):
     interactive: bool = False
 
 
+# Dynamic-part kinds (open registry; §3.7). Each consumer ships its own renderer.
+DYNAMIC_JSX = "jsx"
+DYNAMIC_TOOL_CALL_PROGRESS = "tool_call_progress"
+
+ProgressStatus = Literal["running", "done", "error"]
+
+
+class ToolCallProgressPayload(BaseModel):
+    """Standardized payload for a dynamic ``tool_call_progress`` part.
+
+    A live tqdm-style progress bar streamed from long-running tool / in-sandbox
+    code execution. ``bar_id`` is the STABLE identity — consumers key the
+    rendered bar on it, and it maps to the streamed part id (``part_appended`` on
+    first sighting, ``part_updated`` after). Timing fields are best-effort
+    snapshots.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    bar_id: str
+    desc: str | None = None
+    n: float = 0.0
+    total: float | None = None  # None = unknown length
+    elapsed_s: float | None = None
+    rate: float | None = None  # iterations per second
+    eta_s: float | None = None  # best-effort seconds remaining
+    unit: str = "it"
+    status: ProgressStatus = "running"
+    nest: int = 0  # nesting depth for concurrent / nested bars
+    meta: dict[str, Any] | None = None
+
+
+def make_tool_call_progress_part(
+    payload: "ToolCallProgressPayload | dict[str, Any]",
+) -> DynamicPart:
+    """Build a dynamic ``tool_call_progress`` part (a live progress bar)."""
+    if isinstance(payload, ToolCallProgressPayload):
+        data = payload.model_dump(exclude_none=True)
+    else:
+        data = dict(payload)
+    return DynamicPart(kind=DYNAMIC_TOOL_CALL_PROGRESS, payload=data, interactive=False)
+
+
 class ReasoningPart(_PartBase):
     type: Literal["reasoning"] = "reasoning"
     text: str = ""
@@ -173,6 +216,8 @@ class ControlPart(_PartBase):
 
     Required fields per kind:
       - ``kind == "cancel"`` requires ``task_id``.
+      - ``kind == "rename"`` requires ``payload.title`` (non-empty); targets
+        ``addr.thread_id``.
 
     Future kinds may add their own required fields under the same
     ``extra="allow"`` extension policy used by other parts.
@@ -186,6 +231,12 @@ class ControlPart(_PartBase):
     # ignored for deny).
     request_id: str | None = None
     scope: str | None = None
+    # Optional per-kind data (mirrors ``DynamicPart.payload``, spec §3.7). Its
+    # shape is defined by convention per ``kind`` — e.g. the ``rename`` kind
+    # carries ``{"title": "..."}``. The fields above are cross-cutting correlation
+    # ids that generic handlers route on; kind-specific data lives here so new
+    # kinds (or new per-kind fields) need no schema change.
+    payload: Any = None
 
 
 class FeedbackPart(_PartBase):
@@ -404,6 +455,11 @@ __all__ = [
     "ToolError",
     "CitationPart",
     "DynamicPart",
+    "DYNAMIC_JSX",
+    "DYNAMIC_TOOL_CALL_PROGRESS",
+    "ProgressStatus",
+    "ToolCallProgressPayload",
+    "make_tool_call_progress_part",
     "ReasoningPart",
     "SubagentPart",
     "ControlPart",
